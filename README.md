@@ -24,7 +24,7 @@
 
 VectorFlow is an open source, high throughput, fault tolerant vector embedding pipeline. With a simple API request, you can send raw data that will be chunked, embedded and stored in any vector database or returned back to you. VectorFlow is multi-modal and can ingest both textual and image data. 
 
-This current version is an MVP. We recommend using it with Kubernetes in production. For text-based files, it supports TXT, PDF, HTML and DOCX. For image files, it support JPG, JPEG, and PNG. 
+This current version is an MVP. We recommend using it with Kubernetes in production (see below for details). For text-based files, it supports TXT, PDF, HTML and DOCX. For image files, it support JPG, JPEG, and PNG. 
 
 # Run it Locally
 With three commands you can run VectorFlow locally:
@@ -114,7 +114,9 @@ Note that the Sentence Transformer models can be large and take several minutes 
 
 ## Using VectorFlow
 
-To use VectorFlow in a live system, make an HTTP request to your API's URL at port 8000 - for example, `localhost:8000` from your development machine, or `vectorflow_api:8000` from within another docker container.
+The best way to use VectorFlow is with the python client. 
+
+To use VectorFlow for development, make an HTTP request to your API's URL - for example, `localhost:8000` from your development machine, or `vectorflow_api:8000` from within another docker container.
 
 ### Request & Response Payload
 
@@ -248,6 +250,26 @@ If you wish to validate which chunks you wish to embed, pass a `ChunkValidationU
 
 ### S3 Endpoint
 VectorFlow is integrated with AWS s3. You can pass a pre-signed s3 URL in the body of the HTTP instead of a file. Use the form field `PreSignedURL` and hit the endpoint `/s3`. This endpoint has the same configuration and restrictions as the `/embed` endpoint. 
+
+### Telemetry
+VectorFlow uses PostHog to anonymously collect data about usage. This does not collect any personally identifiable information. If you want to disable it though, add the following enviroment variable to your `env_vars.env`:
+```
+TELEMETRY_DISABLED=True
+```
+
+## Kubernetes
+You can run VectorFlow locally in Kubernetes with minikube using `./kube/scripts/deploy-local-k8s.sh`, which will apply all the yaml files located in `kube/`. This script will not work if you have not installed docker, minikube and kubectl. 
+
+This script will first build the images locally, then transfer them into minikube. If you want to check what images are available in minikube, run the following:
+
+```
+eval $(minikube docker-env)
+docker images
+```
+
+You will need to run `minikube tunnel` to access the resources located in the cluster from your development machine. The setup script will load the images from your local docker context into minikube's. 
+
+You can use the yaml files in `kube/` as a basis for a production deployment but you will need to customize slightly to the needs of your specific cluster. **Contact us if you need help.**
 
 # Contributing
 

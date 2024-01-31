@@ -10,6 +10,7 @@ import json
 import fitz
 import base64
 import logging
+import copy
 from io import BytesIO
 import services.database.batch_service as batch_service
 import services.database.job_service as job_service
@@ -27,11 +28,16 @@ from urllib.parse import urlparse
 from pathlib import Path
 from llama_index import download_loader
 from services.minio.minio_service import create_minio_client
+from api.posthog import send_telemetry
+from datetime import datetime
 
 auth = Auth()
 pipeline = Pipeline()
 app = Flask(__name__)
-CORS(app) 
+CORS(app)
+
+logging.basicConfig(filename='./api-log.txt', level=logging.INFO)
+logging.basicConfig(filename='./api-errors.txt', level=logging.ERROR)
 
 @app.route("/embed", methods=['POST'])
 def embed():
@@ -70,6 +76,11 @@ def embed():
     if file and is_valid_file_type(file):
         job = safe_db_operation(job_service.create_job, vectorflow_request, file.filename)
         batch_count = process_file(file, vectorflow_request, job.id)
+
+        vectorflow_request_copy = copy.deepcopy(vectorflow_request)
+        send_telemetry("SINGLE_FILE_UPLOAD_SUCCESS", vectorflow_request_copy)
+
+        logging.info(f"{datetime.now()} Successfully created job {job.id} for file {file.filename}")
         return jsonify({'message': f"Successfully added {batch_count} batches to the queue", 'JobID': job.id}), 200
     else:
         return jsonify({'error': 'Uploaded file is not a TXT, PDF, Markdown or DOCX file'}), 400
@@ -143,10 +154,12 @@ def create_jobs():
             pipeline.disconnect()
 
             successfully_uploaded_files[file.filename] = job.id
+            logging.info(f"{datetime.now()} Successfully created job {job.id} for file {file.filename}")
         except Exception as e:
             print(f"Error uploading file {file.filename} to min.io, creating job or passing vectorflow request to message broker. \nError: {e}\n\n")
             failed_uploads.append(file.filename)       
 
+    send_telemetry("MULTI_FILE_UPLOAD_SUCCESS", vectorflow_request)
     return jsonify({'message': 'Files processed', 
                     'successful_uploads': successfully_uploaded_files,
                     'failed_uploads': failed_uploads,
@@ -268,7 +281,8 @@ def process_file(file, vectorflow_request, job_id):
     batch_count = create_batches(file_content, job_id, vectorflow_request)
     return batch_count
 
-def create_batches(file_content, job_id, vectorflow_request):
+def create_batches(file_content, job_id, vectorflow_request_original):
+    vectorflow_request = copy.deepcopy(vectorflow_request_original)
     chunks = [chunk for chunk in split_file(file_content, vectorflow_request.lines_per_batch)]
     
     batches = [Batch(job_id=job_id, embeddings_metadata=vectorflow_request.embeddings_metadata, vector_db_metadata=vectorflow_request.vector_db_metadata) for _ in chunks]
@@ -442,7 +456,21 @@ def is_valid_file_type(file):
     for type in supported_types:
         if file.filename.endswith(type):
             return True
-    return False
+        
+    # Try to detect .txt files by content
+    try:
+        # Read a portion of the file
+        file_content = file.stream.read(1024)
+        file.stream.seek(0)  # Reset the file stream position for later use
+
+        # Attempt to decode the content as utf-8 text
+        file_content.decode('utf-8')
+
+        # If we were able to successfully decode the file as utf-8 text, it's likely a text file
+        file.filename += '.txt'
+        return True  # Successful decoding implies it's a text file
+    except UnicodeDecodeError:
+        return False  # Failed to decode, likely not a text file
 
 def remove_from_minio(filename):
     client = create_minio_client()
